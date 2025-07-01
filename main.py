@@ -230,7 +230,7 @@ def enviar_sms(destinatario: str, mensaje: str):
     try:
         message = client.messages.create(
             body=mensaje,
-            messaging_service_sid=TWILIO_MESSAGING_SERVICE_SID,
+            from_="+19475461431",  # Usar el número de Twilio directamente
             to=destinatario
         )
         print(f"SMS enviado exitosamente. SID: {message.sid}")
@@ -315,7 +315,7 @@ def actualizar_usuario(id: int, correo: Optional[str] = None, nueva_contraseña:
 def eliminar_usuario(id: int, contraseña: str, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para eliminar un usuario específico por ID.
-    Valida la contraseña antes de eliminar el usuario.
+    Valida la contraseña antes de eliminar el usuario y elimina todas las relaciones asociadas.
     """
     usuario = db.query(User).filter(User.id_usuario == id).first()
     if usuario is None:
@@ -325,9 +325,30 @@ def eliminar_usuario(id: int, contraseña: str, db: SessionLocal = Depends(get_d
     if usuario.contraseña_hash != contraseña:
         raise HTTPException(status_code=400, detail="Contraseña incorrecta.")
 
-    db.delete(usuario)
-    db.commit()
-    return {"detail": "Usuario eliminado exitosamente."}
+    try:
+        # Eliminar todas las transacciones del usuario
+        transacciones_eliminadas = db.query(Transaction).filter(Transaction.id_usuario == id).delete()
+        
+        # Eliminar todos los presupuestos del usuario
+        presupuestos_eliminados = db.query(Budget).filter(Budget.id_usuario == id).delete()
+        
+        # Eliminar todos los pagos fijos del usuario
+        pagos_eliminados = db.query(Pago).filter(Pago.id_usuario == id).delete()
+        
+        # Ahora eliminar el usuario
+        db.delete(usuario)
+        db.commit()
+        
+        return {
+            "detail": "Usuario eliminado exitosamente.",
+            "transacciones_eliminadas": transacciones_eliminadas,
+            "presupuestos_eliminados": presupuestos_eliminados,
+            "pagos_eliminados": pagos_eliminados
+        }
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {str(e)}")
 
 
 # Ingresos
