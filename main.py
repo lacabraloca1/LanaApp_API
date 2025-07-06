@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy import create_engine, Column, Integer, String, Numeric, DateTime, ForeignKey, Enum, Boolean, func
@@ -6,17 +7,6 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 from decimal import Decimal
-from twilio.rest import Client
-from dotenv import load_dotenv
-import os
-
-# Cargar las variables de entorno desde el archivo .env
-load_dotenv()
-
-# Configuración de Twilio
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
 
 # Configuración de la base de datos MySQL en Railway
 DATABASE_URL = "mysql+pymysql://root:tzZfIAImhPszeqmloPtScAZShsGsaQWi@switchback.proxy.rlwy.net:37527/lana_app"
@@ -25,7 +15,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 # Inicialización de la aplicación FastAPI
-app = FastAPI()
+app = FastAPI(
+    title="LanaApp API",
+    description="""
+    Desarrollado por:
+    - José Armando Mauricio Acevedo
+    - Victor Olvera Olvera  
+    - Perla Moreno Hurtado
+    - Carlos Hernández Méndez
+    """,
+    version="1.0.0"
+)
 
 # Modelos de la base de datos
 class User(Base):
@@ -40,7 +40,7 @@ class User(Base):
     contraseña_hash = Column(String)
     pin_seguridad = Column(String, nullable=True)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
-    saldo = Column(Numeric(10, 2), default=0)  # Nuevo campo para manejar el saldo
+    saldo = Column(Numeric(10, 2), default=0)
 
 class Transaction(Base):
     """
@@ -97,7 +97,16 @@ class UserCreate(BaseModel):
     nombre: str
     correo: str
     telefono: str
-    contraseña_hash: str
+    contraseña: str  # Cambiado de contraseña_hash a contraseña
+
+class UserUpdate(BaseModel):
+    """
+    Esquema para la actualización de usuarios (modo admin).
+    """
+    nombre: Optional[str] = None
+    correo: Optional[str] = None
+    telefono: Optional[str] = None
+    nueva_contraseña: Optional[str] = None
 
 class TransactionCreate(BaseModel):
     """
@@ -143,7 +152,6 @@ class IngresoCreate(BaseModel):
     monto: float
     descripcion: str
 
-
 class EgresoCreate(BaseModel):
     """
     Esquema para la creación de egresos.
@@ -151,7 +159,6 @@ class EgresoCreate(BaseModel):
     id_usuario: int
     monto: float
     descripcion: str
-
 
 class TransaccionResponse(BaseModel):
     """
@@ -211,6 +218,24 @@ class UserResponse(BaseModel):
     correo: str
     telefono: str
     saldo: float
+    fecha_registro: datetime
+    # Removido pin_seguridad y contraseña_hash
+
+class EstadisticasResponse(BaseModel):
+    """
+    Esquema para la respuesta de estadísticas del usuario.
+    """
+    id_usuario: int
+    nombre: str
+    saldo_actual: float
+    total_ingresos: float
+    total_egresos: float
+    total_pagos_fijos: float
+    porcentaje_disponible: float
+    porcentaje_comprometido_pagos: float
+    ingresos_por_categoria: List[dict]
+    egresos_por_categoria: List[dict]
+    pagos_fijos_detalle: List[dict]
 
 # Dependencia para obtener la sesión de la base de datos
 def get_db():
@@ -223,38 +248,40 @@ def get_db():
     finally:
         db.close()
 
-# Función para enviar un mensaje SMS utilizando Twilio.
-def enviar_sms(destinatario: str, mensaje: str):
-    print(f"Enviando SMS a {destinatario} con el mensaje: {mensaje}")
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    try:
-        message = client.messages.create(
-            body=mensaje,
-            from_="+19475461431",  # Usar el número de Twilio directamente
-            to=destinatario
-        )
-        print(f"SMS enviado exitosamente. SID: {message.sid}")
-        return {"message": "SMS enviado exitosamente.", "sid": message.sid}
-    except Exception as e:
-        print(f"Error al enviar SMS: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error al enviar SMS: {str(e)}")
+# Función para registrar notificaciones (reemplaza el envío de SMS)
+def registrar_notificacion(destinatario: str, mensaje: str):
+    """
+    Registra una notificación en la consola (reemplaza el envío de SMS).
+    """
+    print(f"[NOTIFICACIÓN] Para {destinatario}: {mensaje}")
+    return {"message": "Notificación registrada exitosamente.", "destinatario": destinatario}
 
 # Endpoints de la API
 
+# Redirige automáticamente a la documentación de Swagger.
+@app.get("/", include_in_schema=False)
+def redirect_to_docs():
+    return RedirectResponse(url="/docs")
+
 # Usuarios
-@app.post("/usuarios/registrar", response_model=UserResponse, tags=["Usuarios"], description="Registrar un nuevo usuario.")
+@app.post("/usuarios/registrar", response_model=UserResponse, tags=["Usuarios"], description="Registrar un nuevo usuario. Ejemplo: {\"nombre\": \"Juan Pérez\", \"correo\": \"juan@gmail.com\", \"telefono\": \"4428378528\", \"contraseña\": \"mipassword123\"}")
 def registrar_usuario(user: UserCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para registrar un nuevo usuario.
     """
-    db_user = User(**user.dict())
+    # Crear el usuario mapeando 'contraseña' a 'contraseña_hash'
+    db_user = User(
+        nombre=user.nombre,
+        correo=user.correo,
+        telefono=user.telefono,
+        contraseña_hash=user.contraseña  # Mapear contraseña a contraseña_hash
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
     return db_user
 
-
-@app.post("/usuarios/login", tags=["Usuarios"], description="Iniciar sesión de usuario.")
+@app.post("/usuarios/login", tags=["Usuarios"], description="Iniciar sesión de usuario. Ejemplo: correo=juan@gmail.com, contraseña=mipassword123")
 def login_usuario(correo: str, contraseña: str, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para iniciar sesión de usuario.
@@ -262,19 +289,28 @@ def login_usuario(correo: str, contraseña: str, db: SessionLocal = Depends(get_
     usuario = db.query(User).filter(User.correo == correo, User.contraseña_hash == contraseña).first()
     if not usuario:
         raise HTTPException(status_code=401, detail="Credenciales inválidas.")
-    return {"message": "Inicio de sesión exitoso", "usuario": usuario}
+    
+    # Crear respuesta personalizada sin pin_seguridad y contraseña_hash
+    usuario_response = {
+        "id_usuario": usuario.id_usuario,
+        "nombre": usuario.nombre,
+        "correo": usuario.correo,
+        "telefono": usuario.telefono,
+        "saldo": float(usuario.saldo),
+        "fecha_registro": usuario.fecha_registro
+    }
+    
+    return {"message": "Inicio de sesión exitoso", "usuario": usuario_response}
 
-
-@app.get("/usuarios", response_model=List[UserResponse], tags=["Usuarios"], description="Obtener todos los usuarios.")
-def obtener_usuarios(skip: int = 0, limit: int = 10, db: SessionLocal = Depends(get_db)):
+@app.get("/usuarios", response_model=List[UserResponse], tags=["Usuarios"], description="Obtener todos los usuarios registrados. No requiere parámetros, solo presiona Execute.")
+def obtener_usuarios(db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener todos los usuarios registrados.
     """
-    usuarios = db.query(User).offset(skip).limit(limit).all()
+    usuarios = db.query(User).all()
     return usuarios
 
-
-@app.get("/usuarios/{id}", response_model=UserCreate, tags=["Usuarios"], description="Obtener un usuario por ID.")
+@app.get("/usuarios/{id}", response_model=UserResponse, tags=["Usuarios"], description="Obtener un usuario por ID. Ejemplo: usar id=1 para obtener el usuario con ID 1.")
 def obtener_usuario(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener un usuario específico por ID.
@@ -284,75 +320,84 @@ def obtener_usuario(id: int, db: SessionLocal = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
     return usuario
 
-
-@app.put("/usuarios/{id}", tags=["Usuarios"], description="Actualizar un usuario por ID.")
-def actualizar_usuario(id: int, correo: Optional[str] = None, nueva_contraseña: Optional[str] = None, contraseña_actual: str = None, db: SessionLocal = Depends(get_db)):
+@app.put("/usuarios/{id}", tags=["Usuarios"], description="Actualizar un usuario por ID. Ejemplo: id=1, {\"nombre\": \"Nuevo Nombre\", \"correo\": \"nuevo@gmail.com\", \"telefono\": \"4428378999\", \"nueva_contraseña\": \"nuevapass123\"}")
+def actualizar_usuario(id: int, user_update: UserUpdate, db: SessionLocal = Depends(get_db)):
     """
-    Endpoint para actualizar un usuario específico por ID.
-    Valida la contraseña actual antes de realizar cambios.
+    Endpoint para actualizar un usuario específico por ID (modo admin).
+    Permite actualizar nombre, correo, teléfono y/o contraseña sin validación de contraseña.
     """
     usuario = db.query(User).filter(User.id_usuario == id).first()
     if usuario is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
-    # Validar la contraseña actual
-    if usuario.contraseña_hash != contraseña_actual:
-        raise HTTPException(status_code=400, detail="Contraseña actual incorrecta.")
-
-    # Actualizar correo y/o contraseña
-    if correo:
-        usuario.correo = correo
-    if nueva_contraseña:
-        usuario.contraseña_hash = nueva_contraseña
+    # Actualizar solo los campos que se proporcionaron
+    if user_update.nombre is not None:
+        usuario.nombre = user_update.nombre
+    
+    if user_update.correo is not None:
+        # Verificar que el nuevo correo no esté ya en uso por otro usuario
+        correo_existente = db.query(User).filter(User.correo == user_update.correo, User.id_usuario != id).first()
+        if correo_existente:
+            raise HTTPException(status_code=400, detail="El correo electrónico ya está en uso por otro usuario.")
+        usuario.correo = user_update.correo
+    
+    if user_update.telefono is not None:
+        # Verificar que el nuevo teléfono no esté ya en uso por otro usuario
+        telefono_existente = db.query(User).filter(User.telefono == user_update.telefono, User.id_usuario != id).first()
+        if telefono_existente:
+            raise HTTPException(status_code=400, detail="El número de teléfono ya está en uso por otro usuario.")
+        usuario.telefono = user_update.telefono
+    
+    if user_update.nueva_contraseña is not None:
+        usuario.contraseña_hash = user_update.nueva_contraseña
 
     db.commit()
     db.refresh(usuario)
-    return {"message": "Usuario actualizado exitosamente.", "usuario": usuario}
+    
+    # Crear respuesta sin datos sensibles
+    usuario_response = {
+        "id_usuario": usuario.id_usuario,
+        "nombre": usuario.nombre,
+        "correo": usuario.correo,
+        "telefono": usuario.telefono,
+        "saldo": float(usuario.saldo),
+        "fecha_registro": usuario.fecha_registro
+    }
+    
+    return {"message": "Usuario actualizado exitosamente.", "usuario": usuario_response}
 
-
-# Eliminar un usuario por ID
-@app.delete("/usuarios/{id}", tags=["Usuarios"], description="Eliminar un usuario por ID.")
-def eliminar_usuario(id: int, contraseña: str, db: SessionLocal = Depends(get_db)):
+@app.delete("/usuarios/{id}", tags=["Usuarios"], description="Eliminar un usuario por ID. Ejemplo: usar id=1 para eliminar el usuario con ID 1. Elimina también todas sus transacciones, presupuestos y pagos.")
+def eliminar_usuario(id: int, db: SessionLocal = Depends(get_db)):
     """
-    Endpoint para eliminar un usuario específico por ID.
-    Valida la contraseña antes de eliminar el usuario y elimina todas las relaciones asociadas.
+    Endpoint para eliminar un usuario específico por ID (modo admin).
+    No requiere validación de contraseña.
     """
     usuario = db.query(User).filter(User.id_usuario == id).first()
     if usuario is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
-    # Validar la contraseña
-    if usuario.contraseña_hash != contraseña:
-        raise HTTPException(status_code=400, detail="Contraseña incorrecta.")
-
     try:
         # Eliminar todas las transacciones del usuario
-        transacciones_eliminadas = db.query(Transaction).filter(Transaction.id_usuario == id).delete()
+        db.query(Transaction).filter(Transaction.id_usuario == id).delete()
         
         # Eliminar todos los presupuestos del usuario
-        presupuestos_eliminados = db.query(Budget).filter(Budget.id_usuario == id).delete()
+        db.query(Budget).filter(Budget.id_usuario == id).delete()
         
         # Eliminar todos los pagos fijos del usuario
-        pagos_eliminados = db.query(Pago).filter(Pago.id_usuario == id).delete()
+        db.query(Pago).filter(Pago.id_usuario == id).delete()
         
         # Ahora eliminar el usuario
         db.delete(usuario)
         db.commit()
         
-        return {
-            "detail": "Usuario eliminado exitosamente.",
-            "transacciones_eliminadas": transacciones_eliminadas,
-            "presupuestos_eliminados": presupuestos_eliminados,
-            "pagos_eliminados": pagos_eliminados
-        }
+        return {"detail": "Usuario eliminado exitosamente."}
     
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {str(e)}")
 
-
 # Ingresos
-@app.post("/ingresos/crear", response_model=TransaccionResponse, tags=["Ingresos"], description="Registrar un ingreso.")
+@app.post("/ingresos/crear", response_model=TransaccionResponse, tags=["Ingresos"], description="Registrar un ingreso. Ejemplo: {\"id_usuario\": 1, \"monto\": 1000.50, \"descripcion\": \"Pago de nómina\"}")
 def crear_ingreso(transaction: IngresoCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para registrar un ingreso.
@@ -391,15 +436,14 @@ def crear_ingreso(transaction: IngresoCreate, db: SessionLocal = Depends(get_db)
     usuario.saldo = usuario.saldo + monto_decimal if usuario.saldo else monto_decimal
     db.commit()
 
-    # Enviar SMS al usuario
+    # Registrar notificación
     mensaje = f"Has recibido un ingreso de ${transaction.monto:.2f}. Descripción: {transaction.descripcion}. Tu saldo actual es de ${usuario.saldo:.2f}."
-    enviar_sms(usuario.telefono, mensaje)
+    registrar_notificacion(usuario.telefono, mensaje)
 
     return db_transaction
 
-
 # Egresos
-@app.post("/egresos/crear", response_model=TransaccionResponse, tags=["Egresos"], description="Registrar un egreso.")
+@app.post("/egresos/crear", response_model=TransaccionResponse, tags=["Egresos"], description="Registrar un egreso. Ejemplo: {\"id_usuario\": 1, \"monto\": 250.75, \"descripcion\": \"Compra de supermercado\"}")
 def crear_egreso(transaction: EgresoCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para registrar un egreso.
@@ -410,7 +454,7 @@ def crear_egreso(transaction: EgresoCreate, db: SessionLocal = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
     # Verificar si el saldo es suficiente
-    monto_decimal = Decimal(transaction.monto)  # Convertir monto a Decimal
+    monto_decimal = Decimal(transaction.monto)
     if usuario.saldo is None or usuario.saldo < monto_decimal:
         raise HTTPException(status_code=400, detail="Saldo insuficiente para realizar el egreso.")
 
@@ -440,9 +484,9 @@ def crear_egreso(transaction: EgresoCreate, db: SessionLocal = Depends(get_db)):
     usuario.saldo -= monto_decimal
     db.commit()
 
-    # Enviar SMS al usuario
+    # Registrar notificación
     mensaje = f"Has realizado un egreso de ${transaction.monto:.2f}. Descripción: {transaction.descripcion}. Tu saldo actual es de ${usuario.saldo:.2f}."
-    enviar_sms(usuario.telefono, mensaje)
+    registrar_notificacion(usuario.telefono, mensaje)
 
     # Verificar si el gasto excede el presupuesto
     presupuesto = db.query(Budget).filter(
@@ -453,16 +497,13 @@ def crear_egreso(transaction: EgresoCreate, db: SessionLocal = Depends(get_db)):
     ).first()
 
     if presupuesto and monto_decimal > presupuesto.monto_mensual:
-        mensaje = f"¡Atención! Has excedido tu presupuesto mensual de ${presupuesto.monto_mensual:.2f} para la categoría {categoria.nombre}."
-        enviar_sms(usuario.telefono, mensaje)
+        mensaje_presupuesto = f"¡Atención! Has excedido tu presupuesto mensual de ${presupuesto.monto_mensual:.2f} para la categoría {categoria.nombre}."
+        registrar_notificacion(usuario.telefono, mensaje_presupuesto)
 
     return db_transaction
 
-
 # Transacciones
-
-# Obtener todas las transacciones
-@app.get("/transacciones", response_model=List[TransaccionResponse], tags=["Transacciones"], description="Obtener todas las transacciones de todos los usuarios.")
+@app.get("/transacciones", response_model=List[TransaccionResponse], tags=["Transacciones"], description="Obtener todas las transacciones. Ejemplo: skip=0, limit=10 para ver las primeras 10 transacciones.")
 def obtener_transacciones(skip: int = 0, limit: int = 10, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener todas las transacciones de todos los usuarios.
@@ -470,9 +511,7 @@ def obtener_transacciones(skip: int = 0, limit: int = 10, db: SessionLocal = Dep
     transactions = db.query(Transaction).offset(skip).limit(limit).all()
     return transactions
 
-
-# Obtener transacciones de un usuario específico
-@app.get("/transacciones/{id_usuario}", response_model=List[TransaccionResponse], tags=["Transacciones"], description="Obtener todas las transacciones de un usuario específico.")
+@app.get("/transacciones/{id_usuario}", response_model=List[TransaccionResponse], tags=["Transacciones"], description="Obtener transacciones de un usuario específico. Ejemplo: usar id_usuario=1 para ver todas las transacciones del usuario con ID 1.")
 def obtener_transacciones_usuario(id_usuario: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener todas las transacciones de un usuario específico, ordenadas de la más reciente a la más antigua.
@@ -482,9 +521,7 @@ def obtener_transacciones_usuario(id_usuario: int, db: SessionLocal = Depends(ge
         raise HTTPException(status_code=404, detail="No se encontraron transacciones para este usuario.")
     return transactions
 
-
-# Actualizar una transacción por ID
-@app.put("/transacciones/{id}", response_model=TransaccionResponse, tags=["Transacciones"], description="Actualizar una transacción por ID.")
+@app.put("/transacciones/{id}", response_model=TransaccionResponse, tags=["Transacciones"], description="Actualizar una transacción por ID. Ejemplo: id=1, {\"id_usuario\": 1, \"monto\": 1500.0, \"descripcion\": \"Pago actualizado\"}")
 def actualizar_transaccion(id: int, transaction: TransaccionUpdate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para actualizar una transacción específica por ID.
@@ -520,9 +557,7 @@ def actualizar_transaccion(id: int, transaction: TransaccionUpdate, db: SessionL
     db.refresh(db_transaction)
     return db_transaction
 
-
-# Eliminar una transacción por ID
-@app.delete("/transacciones/{id}", tags=["Transacciones"], description="Eliminar una transacción por ID.")
+@app.delete("/transacciones/{id}", tags=["Transacciones"], description="Eliminar una transacción por ID. Ejemplo: usar id=1 para eliminar la transacción con ID 1.")
 def eliminar_transaccion(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para eliminar una transacción específica por ID.
@@ -535,7 +570,7 @@ def eliminar_transaccion(id: int, db: SessionLocal = Depends(get_db)):
     return {"detail": "Transacción eliminada"}
 
 # Presupuestos
-@app.post("/presupuestos/crear", response_model=BudgetResponse, tags=["Presupuestos"], description="Crear un nuevo presupuesto.")
+@app.post("/presupuestos/crear", response_model=BudgetResponse, tags=["Presupuestos"], description="Crear un nuevo presupuesto. Ejemplo: {\"id_usuario\": 1, \"id_categoria\": 1, \"monto_mensual\": 3000.0, \"mes\": 7, \"año\": 2025}")
 def crear_presupuesto(budget: BudgetCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para crear un nuevo presupuesto.
@@ -546,7 +581,7 @@ def crear_presupuesto(budget: BudgetCreate, db: SessionLocal = Depends(get_db)):
     db.refresh(db_budget)
     return db_budget
 
-@app.get("/presupuestos", response_model=List[BudgetResponse], tags=["Presupuestos"], description="Obtener todos los presupuestos.")
+@app.get("/presupuestos", response_model=List[BudgetResponse], tags=["Presupuestos"], description="Obtener todos los presupuestos. Ejemplo: skip=0, limit=10 para ver los primeros 10 presupuestos.")
 def obtener_presupuestos(skip: int = 0, limit: int = 10, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener todos los presupuestos.
@@ -554,7 +589,7 @@ def obtener_presupuestos(skip: int = 0, limit: int = 10, db: SessionLocal = Depe
     budgets = db.query(Budget).offset(skip).limit(limit).all()
     return budgets
 
-@app.get("/presupuestos/{id}", response_model=BudgetResponse, tags=["Presupuestos"], description="Obtener un presupuesto por ID.")
+@app.get("/presupuestos/{id}", response_model=BudgetResponse, tags=["Presupuestos"], description="Obtener un presupuesto por ID. Ejemplo: usar id=1 para obtener el presupuesto con ID 1.")
 def obtener_presupuesto(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener un presupuesto específico por ID.
@@ -564,7 +599,7 @@ def obtener_presupuesto(id: int, db: SessionLocal = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
     return budget
 
-@app.put("/presupuestos/{id}", response_model=BudgetResponse, tags=["Presupuestos"], description="Actualizar un presupuesto por ID.")
+@app.put("/presupuestos/{id}", response_model=BudgetResponse, tags=["Presupuestos"], description="Actualizar un presupuesto por ID. Ejemplo: id=1, {\"id_usuario\": 1, \"id_categoria\": 1, \"monto_mensual\": 3500.0, \"mes\": 7, \"año\": 2025}")
 def actualizar_presupuesto(id: int, budget: BudgetCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para actualizar un presupuesto específico por ID.
@@ -578,7 +613,7 @@ def actualizar_presupuesto(id: int, budget: BudgetCreate, db: SessionLocal = Dep
     db.refresh(db_budget)
     return db_budget
 
-@app.delete("/presupuestos/{id}", tags=["Presupuestos"], description="Eliminar un presupuesto por ID.")
+@app.delete("/presupuestos/{id}", tags=["Presupuestos"], description="Eliminar un presupuesto por ID. Ejemplo: usar id=1 para eliminar el presupuesto con ID 1.")
 def eliminar_presupuesto(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para eliminar un presupuesto específico por ID.
@@ -590,9 +625,8 @@ def eliminar_presupuesto(id: int, db: SessionLocal = Depends(get_db)):
     db.commit()
     return {"detail": "Presupuesto eliminado"}
 
-
 # Categorías
-@app.post("/categorias/crear", response_model=CategoriaResponse, tags=["Categorías"], description="Crear una nueva categoría.")
+@app.post("/categorias/crear", response_model=CategoriaResponse, tags=["Categorías"], description="Crear una nueva categoría. Ejemplo: {\"nombre\": \"Alimentación\", \"tipo\": \"egreso\"} o {\"nombre\": \"Salario\", \"tipo\": \"ingreso\"}")
 def crear_categoria(categoria: CategoriaCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para crear una nueva categoría.
@@ -603,7 +637,7 @@ def crear_categoria(categoria: CategoriaCreate, db: SessionLocal = Depends(get_d
     db.refresh(db_categoria)
     return db_categoria
 
-@app.get("/categorias", response_model=List[CategoriaResponse], tags=["Categorías"], description="Obtener todas las categorías.")
+@app.get("/categorias", response_model=List[CategoriaResponse], tags=["Categorías"], description="Obtener todas las categorías. Ejemplo: skip=0, limit=10 para ver las primeras 10 categorías.")
 def obtener_categorias(skip: int = 0, limit: int = 10, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener todas las categorías.
@@ -611,7 +645,7 @@ def obtener_categorias(skip: int = 0, limit: int = 10, db: SessionLocal = Depend
     categorias = db.query(Categoria).offset(skip).limit(limit).all()
     return categorias
 
-@app.get("/categorias/{id}", response_model=CategoriaResponse, tags=["Categorías"], description="Obtener una categoría por ID.")
+@app.get("/categorias/{id}", response_model=CategoriaResponse, tags=["Categorías"], description="Obtener una categoría por ID. Ejemplo: usar id=1 para obtener la categoría con ID 1.")
 def obtener_categoria(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener una categoría específica por ID.
@@ -621,7 +655,7 @@ def obtener_categoria(id: int, db: SessionLocal = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
     return categoria
 
-@app.put("/categorias/{id}", response_model=CategoriaResponse, tags=["Categorías"], description="Actualizar una categoría por ID.")
+@app.put("/categorias/{id}", response_model=CategoriaResponse, tags=["Categorías"], description="Actualizar una categoría por ID. Ejemplo: id=1, {\"nombre\": \"Comida Rápida\", \"tipo\": \"egreso\"}")
 def actualizar_categoria(id: int, categoria: CategoriaCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para actualizar una categoría específica por ID.
@@ -635,7 +669,7 @@ def actualizar_categoria(id: int, categoria: CategoriaCreate, db: SessionLocal =
     db.refresh(db_categoria)
     return db_categoria
 
-@app.delete("/categorias/{id}", tags=["Categorías"], description="Eliminar una categoría por ID.")
+@app.delete("/categorias/{id}", tags=["Categorías"], description="Eliminar una categoría por ID. Ejemplo: usar id=1 para eliminar la categoría con ID 1.")
 def eliminar_categoria(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para eliminar una categoría específica por ID.
@@ -648,11 +682,10 @@ def eliminar_categoria(id: int, db: SessionLocal = Depends(get_db)):
     return {"detail": "Categoría eliminada"}
 
 # Pagos fijos
-@app.post("/pagos/crear", response_model=PagoResponse, tags=["Pagos"], description="Crear un nuevo pago fijo.")
+@app.post("/pagos/crear", response_model=PagoResponse, tags=["Pagos"], description="Crear un nuevo pago fijo. Ejemplo: {\"id_usuario\": 1, \"descripcion\": \"Renta mensual\", \"monto\": 8000.0, \"fecha_programada\": \"2025-07-15T00:00:00\"}")
 def crear_pago(pago: PagoCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para crear un nuevo pago fijo.
-    Valida si el usuario tiene suficiente presupuesto para cubrir el pago.
     """
     # Verificar si el usuario existe
     usuario = db.query(User).filter(User.id_usuario == pago.id_usuario).first()
@@ -661,10 +694,6 @@ def crear_pago(pago: PagoCreate, db: SessionLocal = Depends(get_db)):
 
     # Convertir monto a Decimal
     monto_decimal = Decimal(pago.monto)
-
-    # Verificar si el usuario tiene suficiente saldo
-    if usuario.saldo < monto_decimal:
-        raise HTTPException(status_code=400, detail="Saldo insuficiente para registrar el pago fijo.")
 
     # Registrar el pago fijo
     db_pago = Pago(
@@ -677,27 +706,17 @@ def crear_pago(pago: PagoCreate, db: SessionLocal = Depends(get_db)):
     db.commit()
     db.refresh(db_pago)
 
-    # Actualizar el saldo del usuario
-    usuario.saldo -= monto_decimal
-    db.commit()
-
     return db_pago
 
-
-@app.get("/pagos", response_model=List[PagoResponse], tags=["Pagos"], description="Obtener todos los pagos fijos.")
+@app.get("/pagos", response_model=List[PagoResponse], tags=["Pagos"], description="Obtener todos los pagos fijos. Ejemplo: skip=0, limit=10 para ver los primeros 10 pagos fijos.")
 def obtener_pagos(skip: int = 0, limit: int = 10, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener todos los pagos fijos.
     """
     pagos = db.query(Pago).offset(skip).limit(limit).all()
-    for pago in pagos:
-        dias_restantes = (pago.fecha_programada - datetime.utcnow()).days
-        if dias_restantes <= 2 and pago.monto > usuario.saldo:
-            mensaje = f"¡Atención! Tu saldo es insuficiente para el pago de {pago.descripcion} programado para {pago.fecha_programada.strftime('%d/%m/%Y')}."
-            enviar_sms(usuario.telefono, mensaje)
     return pagos
 
-@app.get("/pagos/{id}", response_model=PagoResponse, tags=["Pagos"], description="Obtener un pago fijo por ID.")
+@app.get("/pagos/{id}", response_model=PagoResponse, tags=["Pagos"], description="Obtener un pago fijo por ID. Ejemplo: usar id=1 para obtener el pago fijo con ID 1.")
 def obtener_pago(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para obtener un pago fijo específico por ID.
@@ -707,7 +726,7 @@ def obtener_pago(id: int, db: SessionLocal = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Pago fijo no encontrado.")
     return pago
 
-@app.put("/pagos/{id}", response_model=PagoResponse, tags=["Pagos"], description="Actualizar un pago fijo por ID.")
+@app.put("/pagos/{id}", response_model=PagoResponse, tags=["Pagos"], description="Actualizar un pago fijo por ID. Ejemplo: id=1, {\"id_usuario\": 1, \"descripcion\": \"Renta actualizada\", \"monto\": 8500.0, \"fecha_programada\": \"2025-07-15T00:00:00\"}")
 def actualizar_pago(id: int, pago: PagoCreate, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para actualizar un pago fijo específico por ID.
@@ -723,7 +742,7 @@ def actualizar_pago(id: int, pago: PagoCreate, db: SessionLocal = Depends(get_db
     db.refresh(db_pago)
     return db_pago
 
-@app.delete("/pagos/{id}", tags=["Pagos"], description="Eliminar un pago fijo por ID.")
+@app.delete("/pagos/{id}", tags=["Pagos"], description="Eliminar un pago fijo por ID. Ejemplo: usar id=1 para eliminar el pago fijo con ID 1.")
 def eliminar_pago(id: int, db: SessionLocal = Depends(get_db)):
     """
     Endpoint para eliminar un pago fijo específico por ID.
@@ -735,18 +754,121 @@ def eliminar_pago(id: int, db: SessionLocal = Depends(get_db)):
     db.commit()
     return {"detail": "Pago fijo eliminado"}
 
-
-# Notificaciones
-@app.post("/notificaciones/enviar", tags=["Notificaciones"], description="Enviar notificaciones por SMS.")
-def enviar_notificacion(notificacion: dict):
+@app.get("/usuarios/{id}/estadisticas", response_model=EstadisticasResponse, tags=["Estadísticas"], description="Obtener estadísticas detalladas de un usuario. Ejemplo: usar id=1 para ver estadísticas del usuario con ID 1. Incluye porcentajes de ingresos, egresos y pagos fijos.")
+def obtener_estadisticas_usuario(id: int, db: SessionLocal = Depends(get_db)):
     """
-    Endpoint para enviar notificaciones por SMS.
+    Endpoint para obtener estadísticas detalladas de un usuario específico por ID.
+    Incluye porcentajes de distribución de ingresos, egresos y pagos fijos.
     """
-    destinatario = notificacion.get("destinatario")
-    mensaje = notificacion.get("mensaje")
+    # Verificar si el usuario existe
+    usuario = db.query(User).filter(User.id_usuario == id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
-    if not destinatario or not mensaje:
-        raise HTTPException(status_code=400, detail="Destinatario y mensaje son requeridos.")
+    # Obtener saldo actual
+    saldo_actual = float(usuario.saldo) if usuario.saldo else 0.0
 
-    resultado = enviar_sms(destinatario, mensaje)
-    return resultado
+    # Calcular total de ingresos
+    total_ingresos = db.query(func.sum(Transaction.monto)).filter(
+        Transaction.id_usuario == id,
+        Transaction.tipo == "ingreso"
+    ).scalar() or 0.0
+    total_ingresos = float(total_ingresos)
+
+    # Calcular total de egresos
+    total_egresos = db.query(func.sum(Transaction.monto)).filter(
+        Transaction.id_usuario == id,
+        Transaction.tipo == "egreso"
+    ).scalar() or 0.0
+    total_egresos = float(total_egresos)
+
+    # Calcular total de pagos fijos
+    total_pagos_fijos = db.query(func.sum(Pago.monto)).filter(
+        Pago.id_usuario == id
+    ).scalar() or 0.0
+    total_pagos_fijos = float(total_pagos_fijos)
+
+    # Calcular porcentajes basados en el saldo actual
+    if saldo_actual > 0:
+        porcentaje_comprometido_pagos = (total_pagos_fijos / saldo_actual) * 100
+        porcentaje_disponible = 100 - porcentaje_comprometido_pagos
+    else:
+        porcentaje_comprometido_pagos = 0.0
+        porcentaje_disponible = 0.0
+
+    # Obtener ingresos por categoría con porcentajes
+    ingresos_por_categoria = []
+    if total_ingresos > 0:
+        ingresos_query = db.query(
+            Categoria.nombre,
+            func.sum(Transaction.monto).label('total')
+        ).join(
+            Transaction, Transaction.categoria_id == Categoria.id_categoria
+        ).filter(
+            Transaction.id_usuario == id,
+            Transaction.tipo == "ingreso"
+        ).group_by(Categoria.nombre).all()
+
+        for categoria, monto in ingresos_query:
+            porcentaje = (float(monto) / total_ingresos) * 100
+            ingresos_por_categoria.append({
+                "categoria": categoria,
+                "monto": float(monto),
+                "porcentaje": round(porcentaje, 2)
+            })
+
+    # Obtener egresos por categoría with porcentajes
+    egresos_por_categoria = []
+    if total_egresos > 0:
+        egresos_query = db.query(
+            Categoria.nombre,
+            func.sum(Transaction.monto).label('total')
+        ).join(
+            Transaction, Transaction.categoria_id == Categoria.id_categoria
+        ).filter(
+            Transaction.id_usuario == id,
+            Transaction.tipo == "egreso"
+        ).group_by(Categoria.nombre).all()
+
+        for categoria, monto in egresos_query:
+            porcentaje = (float(monto) / total_egresos) * 100
+            egresos_por_categoria.append({
+                "categoria": categoria,
+                "monto": float(monto),
+                "porcentaje": round(porcentaje, 2)
+            })
+
+    # Obtener detalle de pagos fijos con porcentajes individuales
+    pagos_fijos_detalle = []
+    pagos_fijos = db.query(Pago).filter(Pago.id_usuario == id).all()
+    
+    for pago in pagos_fijos:
+        if saldo_actual > 0:
+            porcentaje_individual = (float(pago.monto) / saldo_actual) * 100
+        else:
+            porcentaje_individual = 0.0
+            
+        pagos_fijos_detalle.append({
+            "id_pago": pago.id_pago,
+            "descripcion": pago.descripcion,
+            "monto": float(pago.monto),
+            "porcentaje_del_saldo": round(porcentaje_individual, 2),
+            "fecha_programada": pago.fecha_programada
+        })
+
+    # Crear respuesta
+    estadisticas = {
+        "id_usuario": usuario.id_usuario,
+        "nombre": usuario.nombre,
+        "saldo_actual": saldo_actual,
+        "total_ingresos": total_ingresos,
+        "total_egresos": total_egresos,
+        "total_pagos_fijos": total_pagos_fijos,
+        "porcentaje_disponible": round(porcentaje_disponible, 2),
+        "porcentaje_comprometido_pagos": round(porcentaje_comprometido_pagos, 2),
+        "ingresos_por_categoria": ingresos_por_categoria,
+        "egresos_por_categoria": egresos_por_categoria,
+        "pagos_fijos_detalle": pagos_fijos_detalle
+    }
+
+    return estadisticas
