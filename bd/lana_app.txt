@@ -1,0 +1,78 @@
+-- Eliminar base de datos si ya existe
+DROP DATABASE IF EXISTS lana_app;
+
+-- Crear base de datos con codificación UTF8 moderna
+CREATE DATABASE lana_app CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+USE lana_app;
+
+-- ===================================
+-- Tabla: usuarios
+-- ===================================
+CREATE TABLE usuarios (
+  id_usuario INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(255) NOT NULL,
+  correo VARCHAR(255) NOT NULL UNIQUE,
+  telefono VARCHAR(20) NOT NULL UNIQUE,
+  contraseña_hash VARCHAR(255) NOT NULL,
+  pin_seguridad VARCHAR(10),
+  fecha_registro DATETIME DEFAULT CURRENT_TIMESTAMP,
+  saldo DECIMAL(10,2) DEFAULT 0.00
+);
+
+-- ===================================
+-- Tabla: categorias
+-- ===================================
+CREATE TABLE categorias (
+  id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL UNIQUE,
+  tipo ENUM('ingreso', 'egreso') NOT NULL
+);
+
+-- ===================================
+-- Tabla: transacciones (AJUSTADA)
+-- ===================================
+CREATE TABLE transacciones (
+  id_transaccion INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  tipo ENUM('ingreso','egreso','envio','solicitud') NOT NULL,
+  monto DECIMAL(10,2) NOT NULL,
+  fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+  descripcion VARCHAR(255),
+  categoria_id INT,
+  destinatario_id INT,
+  estado ENUM('pendiente','completada','cancelada') DEFAULT 'completada',
+
+  -- NUEVOS CAMPOS
+  frecuencia VARCHAR(50) DEFAULT 'única vez',
+  fecha_fin DATE,
+
+  FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+  FOREIGN KEY (categoria_id) REFERENCES categorias(id_categoria) ON DELETE SET NULL,
+  FOREIGN KEY (destinatario_id) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
+);
+
+-- ===================================
+-- Tabla: presupuestos
+-- ===================================
+CREATE TABLE presupuestos (
+  id_presupuesto INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  id_categoria INT NOT NULL,
+  monto_mensual DECIMAL(10,2) NOT NULL,
+  mes INT NOT NULL,
+  año INT NOT NULL,
+  FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+  FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria) ON DELETE CASCADE
+);
+
+-- ===================================
+-- Tabla: pagos
+-- ===================================
+CREATE TABLE pagos (
+  id_pago INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario INT NOT NULL,
+  descripcion VARCHAR(255) NOT NULL,
+  monto DECIMAL(10,2) NOT NULL,
+  fecha_programada DATETIME NOT NULL,
+  FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+);
