@@ -6,4 +6,4 @@ class Categoria(Base):
 
     id_categoria = Column(Integer, primary_key=True, index=True)
     nombre = Column(String(50), unique=True, index=True)
-    tipo = Column(Enum('ingreso', 'egreso'), nullable=False)
+    tipo = Column(Enum('ingreso', 'egreso', 'otro'), nullable=False)

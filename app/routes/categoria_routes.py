@@ -1,75 +1,78 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List ,Optional
-from sqlalchemy.exc import IntegrityError
-from app.models.categoria_model import Categoria
-from app.schemas.categoria_schema import CategoriaCreate, CategoriaResponse
+from typing import List, Optional
+from pydantic import BaseModel
 from app.database import get_db
+from app.models.categoria_model import Categoria
 
-router = APIRouter()
+router = APIRouter(tags=["Categorías"])
 
-@router.post("/categorias/crear", response_model=CategoriaResponse)
-def crear_categoria(categoria: CategoriaCreate, db: Session = Depends(get_db)):
-    existente = (
-        db.query(Categoria)
-          .filter(Categoria.nombre == categoria.nombre.strip())
-          .first()
-    )
+# ────── Esquemas ──────
+class CategoriaCrear(BaseModel):
+    nombre: str
+    tipo: str  # ingreso, egreso, otro
+
+class CategoriaRespuesta(BaseModel):
+    id_categoria: int
+    nombre: str
+    tipo: str
+
+    class Config:
+        orm_mode = True
+
+# ────── Crear ──────
+@router.post("/categorias", response_model=CategoriaRespuesta)
+def crear_categoria(data: CategoriaCrear, db: Session = Depends(get_db)):
+    existente = db.query(Categoria).filter(Categoria.nombre == data.nombre.strip()).first()
     if existente:
-        raise HTTPException(
-            status_code=400,
-            detail=f"La categoría '{categoria.nombre}' ya existe."
-        )
-
-    nueva = Categoria(**categoria.dict())
+        raise HTTPException(status_code=400, detail=f"La categoría '{data.nombre}' ya existe.")
+    
+    nueva = Categoria(nombre=data.nombre.strip(), tipo=data.tipo.strip().lower())
     db.add(nueva)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"La categoría '{categoria.nombre}' ya existe."
-        )
-
+    db.commit()
     db.refresh(nueva)
     return nueva
 
-@router.get("/categorias", response_model=List[CategoriaResponse])
-def obtener_categorias(
-    tipo: Optional[str] = None,
+# ────── Obtener todas ──────
+@router.get("/categorias", response_model=List[CategoriaRespuesta])
+def listar_categorias(
+    tipo: Optional[str] = Query(None, description="Filtrar por tipo: ingreso, egreso"),
     skip: int = 0,
     limit: int = 20,
     db: Session = Depends(get_db)
 ):
-    q = db.query(Categoria)
+    query = db.query(Categoria)
     if tipo:
-        q = q.filter(Categoria.tipo == tipo.lower().strip())
-    return q.offset(skip).limit(limit).all()
+        query = query.filter(Categoria.tipo == tipo.lower().strip())
+    return query.offset(skip).limit(limit).all()
 
-@router.get("/categorias/{id}", response_model=CategoriaResponse)
-def obtener_categoria(id: int, db: Session = Depends(get_db)):
-    cat = db.query(Categoria).filter(Categoria.id_categoria == id).first()
-    if not cat:
+# ────── Obtener una ──────
+@router.get("/categorias/{id_categoria}", response_model=CategoriaRespuesta)
+def obtener_categoria(id_categoria: int, db: Session = Depends(get_db)):
+    categoria = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
+    if not categoria:
         raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    return cat
+    return categoria
 
-@router.put("/categorias/{id}", response_model=CategoriaResponse)
-def actualizar_categoria(id: int, data: CategoriaCreate, db: Session = Depends(get_db)):
-    cat = db.query(Categoria).filter(Categoria.id_categoria == id).first()
-    if not cat:
+# ────── Actualizar ──────
+@router.put("/categorias/{id_categoria}", response_model=CategoriaRespuesta)
+def actualizar_categoria(id_categoria: int, data: CategoriaCrear, db: Session = Depends(get_db)):
+    categoria = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
+    if not categoria:
         raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    cat.nombre = data.nombre
-    cat.tipo = data.tipo
+    
+    categoria.nombre = data.nombre.strip()
+    categoria.tipo = data.tipo.strip().lower()
     db.commit()
-    db.refresh(cat)
-    return cat
+    db.refresh(categoria)
+    return categoria
 
-@router.delete("/categorias/{id}")
-def eliminar_categoria(id: int, db: Session = Depends(get_db)):
-    cat = db.query(Categoria).filter(Categoria.id_categoria == id).first()
-    if not cat:
+# ────── Eliminar ──────
+@router.delete("/categorias/{id_categoria}")
+def eliminar_categoria(id_categoria: int, db: Session = Depends(get_db)):
+    categoria = db.query(Categoria).filter(Categoria.id_categoria == id_categoria).first()
+    if not categoria:
         raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    db.delete(cat)
+    db.delete(categoria)
     db.commit()
-    return {"detail": "Categoría eliminada correctamente"}
+    return {"mensaje": "Categoría eliminada correctamente"}

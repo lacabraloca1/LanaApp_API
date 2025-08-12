@@ -1,78 +1,145 @@
--- Eliminar base de datos si ya existe
-DROP DATABASE IF EXISTS lana_app;
+-- ============================================================================
+--  Lana App - Esquema MySQL completo (producción/desarrollo)
+--  Requisitos: MySQL 8.0+, motor InnoDB
+-- ============================================================================
 
--- Crear base de datos con codificación UTF8 moderna
-CREATE DATABASE lana_app CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+-- (Opcional) crear usuario aplicación (ajusta credenciales si no usas root)
+-- CREATE USER 'lana'@'%' IDENTIFIED BY 'password_fuerte';
+-- GRANT ALL PRIVILEGES ON lana_app.* TO 'lana'@'%';
+
+-- Crear base de datos con utf8mb4
+DROP DATABASE IF EXISTS lana_app;
+CREATE DATABASE lana_app
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_0900_ai_ci;
 USE lana_app;
 
--- ===================================
+-- ============================================================================
 -- Tabla: usuarios
--- ===================================
+-- ============================================================================
+DROP TABLE IF EXISTS usuarios;
 CREATE TABLE usuarios (
-  id_usuario INT AUTO_INCREMENT PRIMARY KEY,
-  nombre VARCHAR(255) NOT NULL,
-  correo VARCHAR(255) NOT NULL UNIQUE,
-  telefono VARCHAR(20) NOT NULL UNIQUE,
-  contraseña_hash VARCHAR(255) NOT NULL,
-  pin_seguridad VARCHAR(10),
-  fecha_registro DATETIME DEFAULT CURRENT_TIMESTAMP,
-  saldo DECIMAL(10,2) DEFAULT 0.00
-);
+  id_usuario       INT AUTO_INCREMENT PRIMARY KEY,
+  nombre           VARCHAR(120)       NOT NULL,
+  correo           VARCHAR(190)       NOT NULL,
+  telefono         VARCHAR(30)        NOT NULL,
+  contrasena_hash  VARCHAR(255)       NOT NULL,
+  saldo            DECIMAL(10,2)      NOT NULL DEFAULT 0.00,
+  creado_en        DATETIME           NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_usuarios_correo (correo),
+  UNIQUE KEY uq_usuarios_telefono (telefono)
+) ENGINE=InnoDB;
 
--- ===================================
+-- ============================================================================
 -- Tabla: categorias
--- ===================================
+--  tipo incluye 'otro' para máxima compatibilidad
+-- ============================================================================
+DROP TABLE IF EXISTS categorias;
 CREATE TABLE categorias (
   id_categoria INT AUTO_INCREMENT PRIMARY KEY,
-  nombre VARCHAR(50) NOT NULL UNIQUE,
-  tipo ENUM('ingreso', 'egreso') NOT NULL
-);
+  nombre       VARCHAR(50) NOT NULL,
+  tipo         ENUM('ingreso','egreso','otro') NOT NULL,
+  UNIQUE KEY uq_categorias_nombre (nombre),
+  KEY idx_categorias_tipo (tipo)
+) ENGINE=InnoDB;
 
--- ===================================
--- Tabla: transacciones (AJUSTADA)
--- ===================================
-CREATE TABLE transacciones (
-  id_transaccion INT AUTO_INCREMENT PRIMARY KEY,
-  id_usuario INT NOT NULL,
-  tipo ENUM('ingreso','egreso','envio','solicitud') NOT NULL,
-  monto DECIMAL(10,2) NOT NULL,
-  fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
-  descripcion VARCHAR(255),
-  categoria_id INT,
-  destinatario_id INT,
-  estado ENUM('pendiente','completada','cancelada') DEFAULT 'completada',
-
-  -- NUEVOS CAMPOS
-  frecuencia VARCHAR(50) DEFAULT 'única vez',
-  fecha_fin DATE,
-
-  FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
-  FOREIGN KEY (categoria_id) REFERENCES categorias(id_categoria) ON DELETE SET NULL,
-  FOREIGN KEY (destinatario_id) REFERENCES usuarios(id_usuario) ON DELETE SET NULL
-);
-
--- ===================================
+-- ============================================================================
 -- Tabla: presupuestos
--- ===================================
+--  Presupuesto mensual por categoría y usuario
+--  (un presupuesto por usuario-categoría-mes-año)
+-- ============================================================================
+DROP TABLE IF EXISTS presupuestos;
 CREATE TABLE presupuestos (
   id_presupuesto INT AUTO_INCREMENT PRIMARY KEY,
-  id_usuario INT NOT NULL,
-  id_categoria INT NOT NULL,
-  monto_mensual DECIMAL(10,2) NOT NULL,
-  mes INT NOT NULL,
-  año INT NOT NULL,
-  FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
-  FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria) ON DELETE CASCADE
-);
+  id_usuario     INT NOT NULL,
+  id_categoria   INT NOT NULL,
+  monto_mensual  DECIMAL(10,2) NOT NULL,
+  mes            TINYINT       NOT NULL, -- 1..12
+  año            SMALLINT      NOT NULL,
+  CONSTRAINT fk_pres_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_pres_categoria
+    FOREIGN KEY (id_categoria) REFERENCES categorias(id_categoria)
+    ON DELETE CASCADE,
+  CONSTRAINT uq_pres_usuario_categoria_mes_anio
+    UNIQUE (id_usuario, id_categoria, mes, año),
+  KEY idx_pres_mes_anio (mes, año)
+) ENGINE=InnoDB;
 
--- ===================================
--- Tabla: pagos
--- ===================================
+-- ============================================================================
+-- Tabla: transacciones
+--  Soporta ingresos/egresos (y extensiones envío/solicitud si las usas)
+-- ============================================================================
+DROP TABLE IF EXISTS transacciones;
+CREATE TABLE transacciones (
+  id_transaccion  INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario      INT NOT NULL,
+  tipo            ENUM('ingreso','egreso','envio','solicitud') NOT NULL,
+  monto           DECIMAL(10,2) NOT NULL,
+  fecha           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  descripcion     VARCHAR(255) NULL,
+  categoria_id    INT NULL,
+  destinatario_id INT NULL,                           -- opcional si manejas envíos
+  estado          ENUM('pendiente','completada','cancelada') NOT NULL DEFAULT 'completada',
+  -- campos opcionales heredados del modelo, si los usas:
+  frecuencia      VARCHAR(50) NULL,
+  fecha_fin       DATE NULL,
+
+  CONSTRAINT fk_tx_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_tx_categoria
+    FOREIGN KEY (categoria_id) REFERENCES categorias(id_categoria)
+    ON DELETE SET NULL,
+  CONSTRAINT fk_tx_destinatario
+    FOREIGN KEY (destinatario_id) REFERENCES usuarios(id_usuario)
+    ON DELETE SET NULL,
+
+  KEY idx_tx_usuario_fecha (id_usuario, fecha),
+  KEY idx_tx_tipo (tipo),
+  KEY idx_tx_categoria (categoria_id)
+) ENGINE=InnoDB;
+
+-- ============================================================================
+-- Tabla: pagos (pagos fijos / programados)
+--  Incluye recurrencia real + categoría + control activo
+-- ============================================================================
+DROP TABLE IF EXISTS pagos;
 CREATE TABLE pagos (
-  id_pago INT AUTO_INCREMENT PRIMARY KEY,
-  id_usuario INT NOT NULL,
-  descripcion VARCHAR(255) NOT NULL,
-  monto DECIMAL(10,2) NOT NULL,
-  fecha_programada DATETIME NOT NULL,
-  FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
-);
+  id_pago            INT AUTO_INCREMENT PRIMARY KEY,
+  id_usuario         INT NOT NULL,
+  descripcion        VARCHAR(255) NOT NULL,
+  monto              DECIMAL(10,2) NOT NULL,
+
+  fecha_programada   DATETIME NOT NULL,       -- historial/compat
+  categoria_id       INT NULL,                -- para validar presupuesto/estadísticas
+  periodicidad       ENUM('none','weekly','monthly') NOT NULL DEFAULT 'none',
+  proxima_ejecucion  DATE NOT NULL,           -- lo que consultan los CRON
+  activo             TINYINT(1) NOT NULL DEFAULT 1,
+
+  CONSTRAINT fk_pago_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_pago_categoria
+    FOREIGN KEY (categoria_id) REFERENCES categorias(id_categoria)
+    ON DELETE SET NULL,
+
+  KEY idx_pago_usuario (id_usuario),
+  KEY idx_pago_proxima (proxima_ejecucion),
+  KEY idx_pago_activo (activo)
+) ENGINE=InnoDB;
+
+-- Trigger para inicializar proxima_ejecucion si viene NULL en INSERT
+DROP TRIGGER IF EXISTS trg_pagos_set_proxima_ejecucion;
+DELIMITER $$
+CREATE TRIGGER trg_pagos_set_proxima_ejecucion
+BEFORE INSERT ON pagos
+FOR EACH ROW
+BEGIN
+  IF NEW.proxima_ejecucion IS NULL THEN
+    SET NEW.proxima_ejecucion = DATE(NEW.fecha_programada);
+  END IF;
+END$$
+DELIMITER ;
+
